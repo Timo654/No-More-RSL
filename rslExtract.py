@@ -65,7 +65,6 @@ def read_resources(rsl, header_pos, extract_folder, str_list):
     if res_data['Attribute'] < 2:
         with rsl.seek_to(resource_offset):
             with rsl.seek_to(0, 1):  # read magic
-                print(rsl.pos())
                 try:
                     resource_magic = rsl.read_str(4)
                 except(UnicodeDecodeError): #in case the file has no magic
