@@ -6,7 +6,7 @@ from binary_reader import BinaryReader
 
 # extract the file
 
-#TODO - fix attribute 2 i guess
+
 def extract_file(rsl, extract_folder, filename, end_pointer):
     global res_count
     Path(extract_folder).mkdir(parents=True, exist_ok=True)
@@ -61,14 +61,14 @@ def read_resources(rsl, header_pos, extract_folder, str_list):
     except(IndexError):
         res_data['Resource Name'] = None
     rsl.seek(12, 1)  # padding
-    resource_offset = resource_pointer + header_pos
-    #if res_data['Attribute'] < 2:
-    if res_data['Resource Name'] != None:
-        with rsl.seek_to(resource_offset):
+    if resource_pointer > 0:
+        resource_offset = resource_pointer + header_pos
+        if res_data['Resource Name'] != None:
+            with rsl.seek_to(resource_offset):
                 with rsl.seek_to(0, 1):  # read magic
                     try:
                         resource_magic = rsl.read_str(4)
-                    except(UnicodeDecodeError): #in case the file has no magic
+                    except(UnicodeDecodeError):  # in case the file has no magic
                         resource_magic = 'Unk'
 
                 if resource_magic == 'RMHG':
@@ -78,7 +78,10 @@ def read_resources(rsl, header_pos, extract_folder, str_list):
                 else:
                     end_pointer = size + header_pos + resource_pointer
                     extract_file(rsl, extract_folder,
-                                res_data['Resource Name'], end_pointer)
+                                 res_data['Resource Name'], end_pointer)
+    else:
+        # just to separate this from actual missing files in repacker
+        res_data['No pointer'] = True
 
     return res_data
 
@@ -108,7 +111,7 @@ def rmhg(rsl, extract_folder, str_list):
     rmhg_data['Data'] = []
     attribute_pos = attr_ptr + header_pos
     rsl.seek(attribute_pos)
-    for i in range(resource_num):
+    for _ in range(resource_num):
         rmhg_data['Data'].append(read_resources(
             rsl, header_pos, extract_folder, str_list))
 
@@ -130,7 +133,9 @@ def extract(input_file):
     with open((f'{extract_folder}/rsl_data.json'), 'w') as fp:
         json.dump(data, fp, indent=2)
 
-#verify if file is actually rsl
+# verify if file is actually rsl
+
+
 def check_file(input_file):
     file = open(input_file, 'rb')
     br = BinaryReader(file.read())
@@ -143,8 +148,9 @@ def check_file(input_file):
             print('Invalid file, skipping.')
             return False
     except:
-        print('Could not read magic, skipping.')
+        print('Failed to load file, skipping.')
         return False
+
 
 def main():
     global res_count

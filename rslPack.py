@@ -53,13 +53,17 @@ def write_attr(attr_br, data, input_file, string_list):
         if data['Data'][i]['Resource Name'] != None:
             string_list[data['Data'][i]['Resource ID']
                         ] = data['Data'][i]['Resource Name']
-        if 'Resource' in data['Data'][i]:
-            write_rmhg(br_internal, data['Data'][i]['Resource'],
-                       f"{input_file}/{data['Data'][i]['Resource Name']}", string_list)
-        elif data['Data'][i]['Resource Name'] != None:
-                br_internal = write_rsrc(br_internal, data['Data'][i], input_file)
+        if 'No pointer' not in data['Data'][i]:
+            if 'Resource' in data['Data'][i]:
+                write_rmhg(br_internal, data['Data'][i]['Resource'],
+                           f"{input_file}/{data['Data'][i]['Resource Name']}", string_list)
+            elif data['Data'][i]['Resource Name'] != None:
+                br_internal = write_rsrc(
+                    br_internal, data['Data'][i], input_file)
 
-        attr_br.write_uint32(br_internal.size() - start_pos)
+            attr_br.write_uint32(br_internal.size() - start_pos)
+        else:
+            attr_br.write_uint32(0)  # Pointer is 0
         attr_br.write_uint32(data['Data'][i]['Attribute'])
         attr_br.write_uint32(data['Data'][i]['Version'])
         attr_br.write_uint32(data['Data'][i]['Resource ID'])
