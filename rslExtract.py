@@ -6,7 +6,7 @@ from binary_reader import BinaryReader
 
 # extract the file
 
-
+#TODO - fix attribute 2 i guess
 def extract_file(rsl, extract_folder, filename, end_pointer):
     global res_count
     Path(extract_folder).mkdir(parents=True, exist_ok=True)
@@ -48,7 +48,7 @@ def read_resources(rsl, header_pos, extract_folder, str_list):
     res_data = {}
     resource_pointer = rsl.read_uint32()
     size = rsl.read_uint32()
-    # is attribute? true/false/disabled?
+    # is attribute? true/false/unknown?
     res_data['Attribute'] = rsl.read_uint32()
     if res_data['Attribute']:
         res_data['Type'] = 'Attribute'
@@ -62,22 +62,23 @@ def read_resources(rsl, header_pos, extract_folder, str_list):
         res_data['Resource Name'] = None
     rsl.seek(12, 1)  # padding
     resource_offset = resource_pointer + header_pos
-    if res_data['Attribute'] < 2:
+    #if res_data['Attribute'] < 2:
+    if res_data['Resource Name'] != None:
         with rsl.seek_to(resource_offset):
-            with rsl.seek_to(0, 1):  # read magic
-                try:
-                    resource_magic = rsl.read_str(4)
-                except(UnicodeDecodeError): #in case the file has no magic
-                    resource_magic = 'Unk'
+                with rsl.seek_to(0, 1):  # read magic
+                    try:
+                        resource_magic = rsl.read_str(4)
+                    except(UnicodeDecodeError): #in case the file has no magic
+                        resource_magic = 'Unk'
 
-            if resource_magic == 'RMHG':
-                res_data['Resource'] = rmhg(
-                    rsl, f"{extract_folder}/{res_data['Resource Name']}", str_list)
+                if resource_magic == 'RMHG':
+                    res_data['Resource'] = rmhg(
+                        rsl, f"{extract_folder}/{res_data['Resource Name']}", str_list)
 
-            else:
-                end_pointer = size + header_pos + resource_pointer
-                extract_file(rsl, extract_folder,
-                             res_data['Resource Name'], end_pointer)
+                else:
+                    end_pointer = size + header_pos + resource_pointer
+                    extract_file(rsl, extract_folder,
+                                res_data['Resource Name'], end_pointer)
 
     return res_data
 
@@ -129,6 +130,21 @@ def extract(input_file):
     with open((f'{extract_folder}/rsl_data.json'), 'w') as fp:
         json.dump(data, fp, indent=2)
 
+#verify if file is actually rsl
+def check_file(input_file):
+    file = open(input_file, 'rb')
+    br = BinaryReader(file.read())
+    file.close()
+    try:
+        magic = br.read_str(4)
+        if magic in ['RMHG', 'GHMR']:
+            extract(input_file)
+        else:
+            print('Invalid file, skipping.')
+            return False
+    except:
+        print('Could not read magic, skipping.')
+        return False
 
 def main():
     global res_count
@@ -140,8 +156,8 @@ def main():
     input_files = args.input
     file_count = 0
     for file in input_files:
-        extract(file)
-        file_count += 1
+        if check_file(file) != False:
+            file_count += 1
     print(f'{file_count} file(s) unpacked.')
     os.system('pause')
 
