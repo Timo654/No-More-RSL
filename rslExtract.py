@@ -3,29 +3,30 @@ import json
 import os
 from pathlib import Path
 from binary_reader import BinaryReader
-
-# extract the file
+import time
 
 
 def extract_file(rsl, extract_folder, filename, end_pointer):
-    global res_count
-    Path(extract_folder).mkdir(parents=True, exist_ok=True)
+    try:
+        Path(extract_folder).mkdir(parents=True, exist_ok=True)
+    except(FileExistsError):
+        print(
+            f'File {extract_folder}/{filename} already exists, unable to create.')
+
     with open(f'{extract_folder}/{filename}', 'wb') as f:
         f.write(rsl.buffer()[rsl.pos():end_pointer])
-    res_count += 1
 
 
-def extract_strings(br, str_count):
-    # strings are xor-ed
-    br = BinaryReader(bytearray(map(lambda x: x ^ 0x8D, br.buffer())))
+def extract_strings(br, str_count, version):
+    if version > 1040:  # strings are xor-ed in newer versions
+        br = BinaryReader(bytearray(map(lambda x: x ^ 0x8D, br.buffer())))
     string_list = []
     for _ in range(str_count):
         string_list.append(br.read_str())
     return string_list
 
 
-def read_string_table(rsl):
-    global res_count
+def read_string_table(rsl, version):
     strings = {}
     header_pos = rsl.pos()
     string_count = rsl.read_uint32()
@@ -37,64 +38,57 @@ def read_string_table(rsl):
         string_pointers.append(rsl.read_uint32())
     str_start = string_pointers[0] + header_pos
     br = BinaryReader(rsl.buffer()[str_start:rsl.size()])
-    strings['Strings'] = extract_strings(br, string_count)
+    strings['Strings'] = extract_strings(br, string_count, version)
 
     return strings
 
-# read resources from RMHG
 
-
-def read_resources(rsl, header_pos, extract_folder, str_list):
+def read_resources(rsl, header_pos, extract_folder, str_list, recurse_mode):
     res_data = {}
     resource_pointer = rsl.read_uint32()
     size = rsl.read_uint32()
-    # is attribute? true/false/unknown?
-    res_data['Attribute'] = rsl.read_uint32()
-    if res_data['Attribute']:
-        res_data['Type'] = 'Attribute'
-    else:
-        res_data['Type'] = 'File'
-    res_data['Version'] = rsl.read_uint32()
-    res_data['Resource ID'] = rsl.read_uint32()
-    try:
-        res_data['Resource Name'] = str_list[res_data['Resource ID']]
-    except(IndexError):
-        res_data['Resource Name'] = None
-    rsl.seek(12, 1)  # padding
-    if resource_pointer > 0:
-        resource_offset = resource_pointer + header_pos
-        if res_data['Resource Name'] != None:
-            with rsl.seek_to(resource_offset):
-                with rsl.seek_to(0, 1):  # read magic
-                    try:
-                        resource_magic = rsl.read_str(4)
-                    except(UnicodeDecodeError):  # in case the file has no magic
-                        resource_magic = 'Unk'
+    res_data['Flags'] = rsl.read_uint32()
 
+    res_data['Version'] = rsl.read_uint32()
+    res_data['Resource ID'] = rsl.read_int32()
+    rsl.seek(12, 1)  # padding
+    if res_data['Resource ID'] > -1:
+        res_data['Resource Name'] = str_list[res_data['Resource ID']]
+    else:
+        res_data['Resource Name'] = ""  # no folder
+
+    if size > 0:
+        resource_offset = resource_pointer + header_pos
+        with rsl.seek_to(resource_offset):
+            if res_data['Flags'] > 0:
+                with rsl.seek_to(0, 1):  # read magic
+                    resource_magic = rsl.read_str(4)
                 if resource_magic == 'RMHG':
                     res_data['Resource'] = rmhg(
-                        rsl, f"{extract_folder}/{res_data['Resource Name']}", str_list)
-
+                        rsl, f"{extract_folder}/{res_data['Resource Name']}", str_list, recurse_mode)
                 else:
-                    end_pointer = size + header_pos + resource_pointer
-                    extract_file(rsl, extract_folder,
-                                 res_data['Resource Name'], end_pointer)
+                    print(
+                        "This message shouldn't have appeared,\nplease report it to the tool's creator\nalong with the file you tried to extract.")
+
+            # recursively unpack RSLs
+            elif recurse_mode and res_data['Resource Name'].lower().endswith('.rsl'):
+                res_data['Resource'] = rmhg(
+                    rsl, f"{extract_folder}/{res_data['Resource Name']}", str_list, recurse_mode)
+            else:
+                end_pointer = size + header_pos + resource_pointer
+                extract_file(rsl, extract_folder,
+                             res_data['Resource Name'], end_pointer)
     else:
         # just to separate this from actual missing files in repacker
-        res_data['No pointer'] = True
+        res_data['No file'] = True
 
     return res_data
 
 
-# load the RMHG
-
-
-def rmhg(rsl, extract_folder, str_list):
+def rmhg(rsl, extract_folder, str_list, recurse_mode):
     header_pos = rsl.pos()
     rmhg_data = {}
-    rmhg_data['Type'] = rsl.read_str(4)  # RMHG or GHMR
-    if rmhg_data['Type'] == 'GHMR':  # big endian
-        rsl.set_endian(True)
+    rmhg_data['Type'] = rsl.read_str(4)  # RMHG
     resource_num = rsl.read_uint32()
     attr_ptr = rsl.read_uint32()
     rmhg_data['Version'] = rsl.read_uint32()
@@ -103,7 +97,7 @@ def rmhg(rsl, extract_folder, str_list):
     if str_table_ptr > 0:  # extract strings
         str_table_ptr += header_pos
         with rsl.seek_to(str_table_ptr):
-            str_info = read_string_table(rsl)
+            str_info = read_string_table(rsl, rmhg_data['Version'])
             str_list = str_info['Strings']
             rmhg_data['String flag'] = str_info['Flag']
 
@@ -113,59 +107,57 @@ def rmhg(rsl, extract_folder, str_list):
     rsl.seek(attribute_pos)
     for _ in range(resource_num):
         rmhg_data['Data'].append(read_resources(
-            rsl, header_pos, extract_folder, str_list))
+            rsl, header_pos, extract_folder, str_list, recurse_mode))
 
     return rmhg_data
 
 
-def extract(input_file):
-    global res_count
-    res_count = 0
-
+def extract(input_file, recurse_mode):
     file = open(input_file, 'rb')
     rsl = BinaryReader(file.read())
     file.close()
     extract_folder = input_file[:-4]
 
     print(f'Extracting {input_file}...')
-    data = rmhg(rsl, extract_folder, None)
+    data = rmhg(rsl, extract_folder, None, recurse_mode)
 
+    Path(extract_folder).mkdir(parents=True, exist_ok=True)
     with open((f'{extract_folder}/rsl_data.json'), 'w') as fp:
         json.dump(data, fp, indent=2)
 
-# verify if file is actually rsl
 
-
-def check_file(input_file):
+def check_file(input_file, recurse_mode):
     file = open(input_file, 'rb')
     br = BinaryReader(file.read())
     file.close()
     try:
         magic = br.read_str(4)
-        if magic in ['RMHG', 'GHMR']:
-            extract(input_file)
+        if magic == 'RMHG':
+            extract(input_file, recurse_mode)
         else:
-            print('Invalid file, skipping.')
+            print(
+                "Invalid file, skipping. If this is an .rsl file, please report this to the tool's creator.")
             return False
     except:
-        print('Failed to load file, skipping.')
+        print("Failed to unpack file, skipping. If this is an .rsl file, please report this to the tool's creator.")
         return False
 
 
 def main():
-    global res_count
     parser = argparse.ArgumentParser()
-    parser.add_argument("input",  help='Input file (.rsl)',
+    parser.add_argument("input",  help='input file (.rsl)',
                         type=str, nargs='+')
+    parser.add_argument('--no-recurse',  help='disable recursive extraction of RSL files', dest='recurse', action='store_false')
+    parser.set_defaults(recurse=True)
     args = parser.parse_args()
 
     input_files = args.input
     file_count = 0
     for file in input_files:
-        if check_file(file) != False:
+        if check_file(file, args.recurse) != False:
             file_count += 1
     print(f'{file_count} file(s) unpacked.')
-    os.system('pause')
+    time.sleep(2)
 
 
 if __name__ == "__main__":
